@@ -1,0 +1,13 @@
+- sampling_method: ode
+  num_sampling_steps: [1024]
+  cfgs: [2.5]
+  self_cond_cfg_scales: [1]
+  time_schedule: logit_normal
+
+
+- sampling_method: sde
+  num_sampling_steps: [1024]
+  cfgs: [2.5]
+  sde_gamma: 0.2
+  self_cond_cfg_scales: [1]
+  time_schedule: logit_normal

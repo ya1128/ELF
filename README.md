@@ -8,6 +8,7 @@ This is the official JAX implementation for the paper *ELF: Embedded Language Fl
 
 ## Updates
 
+- **November 4, 2026**: Added GSM8K math reasoning code.
 - **June 26, 2026**: Added the PyTorch progressive distillation (PD) code on the [`distillation`](https://github.com/lillian039/ELF/tree/distillation) branch.
 - **Initial release**: JAX/TPU code, plus a PyTorch version on the [`pytorch_elf`](https://github.com/lillian039/ELF/tree/pytorch_elf) branch.
 
@@ -30,7 +31,7 @@ ELF is a class of continuous diffusion language models based on continuous-time 
 </p>
 
 <p align="center">
-  <img src="assets/sys_compare.jpg" alt="System-level comparison" width="100%"/>
+  <img src="assets/system_compare.jpg" alt="System-level comparison" width="100%"/>
 </p>
 <p align="left">
   <em><strong>System-level comparison.</strong> ELF-B outperforms both discrete and continuous DLMs trained under similar settings (a) and distilled variants of other baselines that require additional rounds of training (b), and uses substantially fewer training tokens (c).</em>
@@ -150,9 +151,19 @@ python eval.py \
 ```
 The evaluator runs on each task's **validation** set and reports BLEU for WMT14 De-En and ROUGE-1/2/L for XSum. Expected: BLEU ≈ 26.7 on De-En; ROUGE-1/2/L ≈ 36.3 / 12.5 / 28.1 on XSum. Note that the paper numbers are computed on the **test** sets, so validation scores here may differ slightly.
 
+**Math reasoning (GSM8K):**
+```bash
+cd src/
+
+python eval.py \
+    --config configs/training_configs/train_tinygsm_ELF-B.yml \
+    --checkpoint_path outputs/elf_b-tinygsm/checkpoint_<step>
+```
+The model generates one Python program per problem. Each program is executed in a sandboxed subprocess and counts as correct if `simple_math_problem()` returns the reference answer; the evaluator reports execution accuracy over all 1,319 test problems with a 95% bootstrap CI.
+
 ## Data Preparation
 
-Three task settings: unconditional generation on **OpenWebText**, machine translation on **WMT14 De-En**, and summarization on **XSum**. All use a frozen T5 encoder for text-to-embedding mapping.
+Four task settings: unconditional generation on **OpenWebText**, machine translation on **WMT14 De-En**, summarization on **XSum**, and mathematical reasoning on **TinyGSM** (evaluated on **GSM8K**). All use a frozen T5 encoder for text-to-embedding mapping.
 
 #### Pre-tokenized splits
 
@@ -163,9 +174,12 @@ We provide pre-tokenized splits (T5 tokenizer) and the JAX T5-small encoder on H
 | OpenWebText | `embedded-language-flows/openwebtext-t5` |
 | WMT14 De-En | `embedded-language-flows/wmt14_de-en_{train,validation}_t5` |
 | XSum | `embedded-language-flows/xsum_{train,validation}_t5` |
+| TinyGSM / GSM8K | `embedded-language-flows/tinygsm_train_t5` / `embedded-language-flows/gsm8k_test_t5` |
 | T5 encoder | `embedded-language-flows/t5_small_encoder_jax/t5_small_encoder_jax.pkl` |
 
 To use a local copy, point `data_path` at a directory saved with `datasets.save_to_disk` — the loader falls back to `load_from_disk`.
+
+TinyGSM targets are Python programs. The T5 vocabulary drops whitespace (newlines, indentation) and cannot represent characters such as `{`, `}`, `<`, and `\`, so programs are escaped with T5 sentinel tokens before tokenization (`escape_code` in [code_utils.py](src/utils/code_utils.py)). Set `code_target: true` (as in `train_tinygsm_ELF-B.yml`) so generated samples are decoded back to Python and scored by execution.
 
 #### Prepare your own data
 
@@ -222,6 +236,7 @@ Available training configs:
 - `configs/training_configs/train_owt_ELF-L.yml` — unconditional generation on OpenWebText, ELF-L
 - `configs/training_configs/train_de-en_ELF-B.yml` — WMT14 De-En machine translation
 - `configs/training_configs/train_xsum_ELF-B.yml` — XSum abstractive summarization
+- `configs/training_configs/train_tinygsm_ELF-B.yml` — TinyGSM mathematical reasoning (Python programs), evaluated on GSM8K by execution
 
 Default ELF-B training uses Muon at blr=0.001 (base learning rate; effective lr = blr × batch_size / 256 = 0.002 at the default batch size of 512), global batch size 512, and runs 5 epochs on OWT (~95K steps) on TPU v5p-64 (~1.5 h per epoch).
 
@@ -269,6 +284,7 @@ Sampling is decoupled from training and is controlled by a separate YAML in `con
 
 - `uncond_sampling_configs.yml` — unconditional generation: two SDE schedules, 32-step (γ=1.5) and 64-step (γ=1.0), both with SC-CFG=3
 - `cond_sampling_configs.yml` — conditional generation (translation / summarization): one 64-step ODE schedule with CFG=2 and SC-CFG=1
+- `gsm_sampling_configs.yml` — math reasoning (GSM8K): 1,024-step ODE and SDE (γ=0.2) schedules, both with CFG=2.5 and SC-CFG=1
 
 Each list entry specifies a sampler (`ode` / `sde`), `num_sampling_steps`, `cfgs`, `self_cond_cfg_scales`, and `time_schedule`. The evaluator iterates through all entries.
 
@@ -293,10 +309,10 @@ This repo is under the MIT license. See [LICENSE](LICENSE) for details.
 If you find this work useful in your research, please consider citing our paper :)
 
 ```bib
-@article{elf2026,
+@inproceedings{elf2026,
   title={ELF: Embedded Language Flows},
   author={Hu, Keya and Qiu, Linlu and Lu, Yiyang and Zhao, Hanhong and Li, Tianhong and Kim, Yoon and Andreas, Jacob and He, Kaiming},
-  journal={arXiv preprint arXiv:2605.10938},
+  booktitle={Advances in Neural Information Processing Systems},
   year={2026}
 }
 ```
