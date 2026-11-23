@@ -1,0 +1,46 @@
+[launch] single-process: python src/eval.py --config src/configs/training_configs/train_xsum_ELF-B.yml --checkpoint_path /data/home/scyb288/run/zy/ELF/assets/ELF-B-xsum-torch --config_override encoder_model_name=/data/home/scyb288/run/zy/ELF/assets/t5-small --config_override tokenizer_name=/data/home/scyb288/run/zy/ELF/assets/t5-small --config_override eval_data_path=/data/home/scyb288/run/zy/ELF/assets/xsum_validation_t5 --config_override global_batch_size=1 --config_override num_samples=4 --config_override use_bf16=true --config_override use_compile=false --config_override use_wandb=false
+INFO - __main__ - Loading configuration...
+INFO - __main__ - Applied 8 config override(s)
+INFO - __main__ - Using global batch size for evaluation: 1
+INFO - __main__ - Config loaded from src/configs/training_configs/train_xsum_ELF-B.yml
+INFO - __main__ - Model: ELF-B
+INFO - __main__ - Encoder Model: /data/home/scyb288/run/zy/ELF/assets/t5-small
+INFO - __main__ - Encoder Checkpoint: None
+INFO - __main__ - Max length: 1088
+INFO - __main__ - Max input length: 1024
+INFO - __main__ - Num samples: 4
+INFO - __main__ - Sampling configs: 1 config(s)
+INFO - __main__ - BF16 autocast (sampling): True
+INFO - __main__ - torch.compile (eval model): False
+INFO - __main__ - Seeds to evaluate: [42]
+INFO - __main__ - Loading tokenizer...
+INFO - __main__ - Using EOS token for padding: 1
+INFO - __main__ - Loading dataset for conditional generation...
+INFO - __main__ - Eval dataset size: 11332
+INFO - __main__ - Loading Encoder: /data/home/scyb288/run/zy/ELF/assets/t5-small...
+INFO - modules.t5_encoder - Loading T5 Encoder: /data/home/scyb288/run/zy/ELF/assets/t5-small...
+INFO - __main__ - Creating ELF-B model...
+INFO - utils.muon_utils - Muon: 58 2D params; Nesterov-AdamW: 109 other params
+INFO - utils.train_utils - Using Muon optimizer
+INFO - __main__ - Loading checkpoint from: /data/home/scyb288/run/zy/ELF/assets/ELF-B-xsum-torch
+INFO - utils.checkpoint_utils - Loading ELF checkpoint from /data/home/scyb288/run/zy/ELF/assets/ELF-B-xsum-torch...
+INFO - utils.checkpoint_utils - Loading local checkpoint from /data/home/scyb288/run/zy/ELF/assets/ELF-B-xsum-torch...
+INFO - utils.checkpoint_utils - Loaded checkpoint keys: ['params', 'ema_params1', 'opt_state', 'lr_scheduler', 'step', 'epoch', 'dropout_rng', 'grad_accum_buffers']
+INFO - utils.checkpoint_utils - Loaded local checkpoint from step 39800 (epoch 100)
+INFO - generation - Config: SamplingConfig(sampling_method='ode', num_sampling_steps=[64], cfgs=[2], self_cond_cfg_scales=[1], time_schedule='logit_normal', sde_gamma=0.0)
+INFO - generation - 
+======================================================================
+INFO - generation -               CONDITIONAL GENERATION EXAMPLES
+INFO - generation - ======================================================================
+INFO - generation - 
+--- Steps: 64, CFG Scale: 2, SC-CFG: 1 ---
+Generating samples (cond):   0%|          | 0/4 [00:00<?, ?it/s]Generating samples (cond):  25%|██▌       | 1/4 [00:03<00:09,  3.10s/it]Generating samples (cond):  50%|█████     | 2/4 [00:04<00:04,  2.25s/it]Generating samples (cond):  75%|███████▌  | 3/4 [00:06<00:01,  1.85s/it]Generating samples (cond): 100%|██████████| 4/4 [00:07<00:00,  1.66s/it]Generating samples (cond): 100%|██████████| 4/4 [00:07<00:00,  1.87s/it]
+INFO - generation - Generation: 5.62s (64 steps) | Decode: 1.04s
+INFO - generation - ----------------------------------------------------------------------
+INFO - generation - Saved 4 generated texts to outputs/elf_b-xsum/ode-steps64-cfg2-ts_logit_normal-cond/all_generated_100_39800.jsonl
+INFO - absl - Using default tokenizer.
+INFO - generation - BLEU: 7.54  ROUGE-1: 37.31  ROUGE-2: 11.46  ROUGE-L: 28.81
+INFO - generation - ======================================================================
+
+INFO - __main__ - 
+Evaluation complete!
