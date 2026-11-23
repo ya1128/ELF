@@ -3,3 +3,6 @@
   cfgs: [2]
   self_cond_cfg_scales: [1]
   time_schedule: logit_normal
+
+  # 采样设置
+  # 指定采样器类型 ODE；积分步数 64：步数越多、离散误差越小、质量越好；Classifier-Free Guidance（CFG）尺度 = 2；self_cond_cfg_scales（SC-CFG）= 1 中性，不额外放大

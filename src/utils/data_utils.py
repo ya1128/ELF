@@ -9,7 +9,7 @@ from torch.utils.data.distributed import DistributedSampler
 from utils.encoder_utils import build_self_attn_cond_masks
 from utils.logging_utils import log_for_0
 
-
+# 安全地取 world_size 和 rank
 def _process_count() -> int:
     try:
         import torch.distributed as dist
@@ -29,7 +29,7 @@ def _process_index() -> int:
         pass
     return 0
 
-
+# 把配置里的字符串 pad_token 翻译成一个整数 id；pad_token: eos，所以这里返回 EOS 的 id
 def get_pad_token_id(tokenizer, pad_token: str = "pad") -> int:
     """Resolve the token id used for padding, optionally using EOS as pad."""
     token_id = tokenizer.eos_token_id if pad_token == "eos" else tokenizer.pad_token_id
@@ -57,7 +57,7 @@ def prepare_batch(batch: Dict, config, generator: torch.Generator) -> Dict:
     result["label_drop_mask"] = label_drop_mask
     return result
 
-
+# 逐行：输入是"一批变长序列的列表"ids_list，目标长度 target_len；输出一对：(补齐/截断后的矩阵, 每条原始长度)
 def pad_and_truncate(ids_list, target_len, pad_token_id):
     """Pad or truncate sequences to target_len, return stacked array and lengths."""
     padded, lengths = [], []
@@ -83,10 +83,11 @@ def get_dataloader(
     distributed: bool = True,
 ):
     """Create a DataLoader."""
-
+    
     def collate_fn(batch_list):
+        # 第一步：取出每条样本的目标序列
         input_ids_list = [np.array(item["input_ids"]) for item in batch_list]
-
+        # 第二步：把"源新闻 + 摘要"拼成一条[源新闻 | 摘要]完整序列 (前 1024 给条件、总长 1088、给生成段留 64)
         if "condition_input_ids" in batch_list[0]:
             seq_list, cond_lens = [], []
             for item in batch_list:
@@ -98,11 +99,12 @@ def get_dataloader(
         else:
             seq_list = input_ids_list
             cond_lens = np.zeros(len(input_ids_list), dtype=np.int32)
-
+        # 第三步：统一补/截到 1088 ；total_lens 记的是"条件段+目标段"加起来的有效长度
         ids, total_lens = pad_and_truncate(seq_list, max_seq_length, pad_token_id)
         pos = np.arange(max_seq_length)[None, :]
         is_cond = pos < cond_lens[:, None]
         is_valid = pos < total_lens[:, None]
+        # 调 build_self_attn_cond_masks 并组装成 result
         encoder_attn, attn, pred = build_self_attn_cond_masks(is_cond, is_valid, xp=np)
         result = {
             "input_ids": ids,
@@ -114,7 +116,7 @@ def get_dataloader(
             if key in batch_list[0]:
                 result[key] = [item[key] for item in batch_list]
         return result
-
+    # 真正建 DataLoader（是否为分布式？）
     common = dict(
         batch_size=batch_size, num_workers=num_workers, collate_fn=collate_fn,
         drop_last=drop_last, persistent_workers=num_workers > 0,
@@ -128,7 +130,7 @@ def get_dataloader(
         return DataLoader(dataset, sampler=sampler, **common)
     return DataLoader(dataset, shuffle=shuffle, **common)
 
-
+# 逐字段读 jsonl：index 行号、input 源新闻原文、target 参考摘要原文
 def load_jsonl_dataset(path, tokenizer, input_key="input", output_key="output"):
     """Load a JSONL eval set (one `{input, output}` example per line)."""
     examples = []
@@ -193,7 +195,7 @@ def load_dataset_split(path: str, dataset_cache_dir=None):
     ds.set_format(type="numpy", columns=ds.column_names)
     return ds
 
-
+# 训练入口，评测不调用
 def load_dataset(config, dataset_cache_dir=None):
     """Resolve config.data_path / config.eval_data_path into train/eval datasets."""
     log_for_0(f"Loading dataset from {config.data_path}...")

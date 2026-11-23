@@ -49,7 +49,7 @@ def shift_left(x: torch.Tensor, shift_per_sample: torch.Tensor, pad_value=0, axi
 
 
 # ============================================
-# Single-batch sampling (PyTorch)
+# Single-batch sampling (PyTorch) 从 t=0 的噪声出发，一步步把 z 推到 t≈1
 # ============================================
 
 @torch.no_grad()
@@ -68,22 +68,23 @@ def _generate_samples_single_batch(
     """Generate samples for a single batch (PyTorch Euler / SDE rollout)."""
     method = sampling_config.sampling_method
     batch_size, max_length, d_model = z.shape
+    # 如果是无条件分支，cond_seq 和 cond_seq_mask 置为全 0 
     if cond_seq is None:
         cond_seq = torch.zeros((batch_size, max_length, d_model), dtype=z.dtype, device=z.device)
         cond_seq_mask = torch.zeros((batch_size, max_length), dtype=z.dtype, device=z.device)
-
+    # 全过程不变量打包成字典
     step_kwargs = dict(
         model=model, config=config,
         cfg_scale=cfg_scale, self_cond_cfg_scale=self_cond_cfg_scale,
         cond_seq=cond_seq, cond_seq_mask=cond_seq_mask,
     )
-
+    # 在 cond_seq_mask == 1 的位置上，用 cond_seq 的值覆盖第一个参数；mask == 0 的位置保持第一个参数原样（条件段被换成 T5 编码，生成段仍是噪声）
     z = restore_cond(z, cond_seq, cond_seq_mask)
     x_pred = restore_cond(torch.zeros_like(z), cond_seq, cond_seq_mask)
-
+    # n 是时间网格的点数
     n = t_steps.shape[0]
     sde_gamma = getattr(sampling_config, "sde_gamma", 0.0)
-
+    # 主循环：区间被切分，每次取相邻两个时间点 t_steps[i] → t_steps[i+1]；按 method （ode/sde）分派
     use_bf16 = bool(getattr(config, "use_bf16", True)) and z.is_cuda
     with torch.amp.autocast('cuda', dtype=torch.bfloat16, enabled=use_bf16):
         for i in range(n - 2):
@@ -99,7 +100,7 @@ def _generate_samples_single_batch(
             else:
                 raise ValueError(f"Invalid sampling method: {method}")
 
-        # Last step always with ODE.
+        # Last step always with ODE. 最后一步永远用 ODE 
         t = t_steps[-2].item()
         t_next = t_steps[-1].item()
         z, x_pred = _ode_step(z=z, t=t, t_next=t_next, x_pred_prev=x_pred, **step_kwargs)

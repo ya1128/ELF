@@ -28,7 +28,7 @@ def ZERO_INIT(t: torch.Tensor) -> None:
 def NORMAL_INIT_002(t: torch.Tensor) -> None:
     nn.init.normal_(t, mean=0.0, std=0.02)
 
-
+# 所有线性层都运用此函数构造
 def _make_linear(in_features: int, out_features: int, bias: bool = True,
                  kernel_init=DEFAULT_KERNEL_INIT, bias_init=DEFAULT_BIAS_INIT) -> nn.Linear:
     """nn.Linear with explicit initializers."""
@@ -159,7 +159,7 @@ class TimestepEmbedder(nn.Module):
         t_emb = self.mlp_0(self.timestep_embedding(t, self.frequency_embedding_size))
         return self.mlp_2(F.silu(t_emb))
 
-
+# 1100 个位置两两全部可见（双向全注意）
 def scaled_dot_product_attention(
     query: torch.Tensor, key: torch.Tensor, value: torch.Tensor,
     attn_mask: Optional[torch.Tensor] = None,
@@ -184,7 +184,7 @@ def scaled_dot_product_attention(
 
 class Attention(nn.Module):
     """Multi-head self-attention."""
-
+    # 输入隐藏状态 dim = 768（hidden_size）、num_heads = 12 → head_dim = 768 / 12 = 64
     def __init__(self, dim: int, num_heads: int = 8, qkv_bias: bool = True,
                  qk_norm: bool = True, attn_drop: float = 0.0, proj_drop: float = 0.0):
         super().__init__()
@@ -194,27 +194,33 @@ class Attention(nn.Module):
         self.attn_drop = attn_drop
         self.proj_drop = proj_drop
         head_dim = dim // num_heads
-        self.qkv = _make_linear(dim, dim * 3, bias=qkv_bias)
-        self.q_norm = RMSNorm(head_dim) if qk_norm else nn.Identity()
+        self.qkv = _make_linear(dim, dim * 3, bias=qkv_bias)  # 一个矩阵同时产出 Q、K、V 三份 (768, 768*3=2304)
+        self.q_norm = RMSNorm(head_dim) if qk_norm else nn.Identity()  # 归一化维度是 head_dim=64
         self.k_norm = RMSNorm(head_dim) if qk_norm else nn.Identity()
         self.proj = _make_linear(dim, dim, bias=True)
-
+    # 进入 Attention 的 x 形状 = (B, N, C) = (1, 1100, 768)
     def forward(self, x: torch.Tensor, rope_fn: Optional[nn.Module],
                 attention_mask: Optional[torch.Tensor] = None,
                 deterministic: bool = True) -> torch.Tensor:
         """x: (B, N, C). attention_mask: optional int mask (B, N), 1=valid, 0=padded."""
-        B, N, C = x.shape
-        head_dim = self.dim // self.num_heads
-        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, head_dim).permute(2, 0, 3, 1, 4)
-        q, k, v = qkv[0], qkv[1], qkv[2]
+        B, N, C = x.shape  # x = (1, 1100, 768) → B=1, N=1100, C=768；
+        head_dim = self.dim // self.num_heads  # head_dim = 768//12 = 64
+        # .reshape(B, N, 3, num_heads, head_dim) → (1, 1100, 3, 12, 64) 把 2304 那维拆成 3 × 12 × 64；
+        # .permute(2, 0, 3, 1, 4) → (3, 1, 12, 1100, 64)。把那个 3（QKV 轴）挪到最前面，方便下标取
+        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, head_dim).permute(2, 0, 3, 1, 4) 
+        q, k, v = qkv[0], qkv[1], qkv[2]  # 各取下标，得到 q, k, v 都是 (1, 12, 1100, 64)，即 (B, num_heads, N, head_dim)
+        # 单独给 Q/K 归一化（QK-Norm）
         if self.qk_norm:
             q = self.q_norm(q)
             k = self.k_norm(k)
+        # 单独给 Q/K 加入 RoPE
         if rope_fn is not None:
             q = rope_fn(q)
             k = rope_fn(k)
+        # 双向全注意 → (1,12,1100,64)
         x = scaled_dot_product_attention(q, k, v, attn_mask=attention_mask)
-        x = x.permute(0, 2, 1, 3).reshape(B, N, C)
+        x = x.permute(0, 2, 1, 3).reshape(B, N, C)  # permute+reshape → (1,1100,768)
+        # 输出投影
         x = self.proj(x)
         if self.proj_drop > 0.0:
             x = F.dropout(x, p=self.proj_drop, training=not deterministic)

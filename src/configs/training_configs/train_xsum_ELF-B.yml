@@ -1,40 +1,42 @@
-# Dataset
+# Dataset 
+# data_path:训练集；eval_data_path:评测集；max_length:决定位置编码/序列上限；pad_token:自动处理 padding 策略（拿 eos 当 pad）
 data_path: "embedded-language-flows/xsum_train_t5"
 eval_data_path: "embedded-language-flows/xsum_validation_t5"
 max_length: 1088
 max_input_length: 1024
 pad_token: eos
 
-# Encoder
+# Encoder mean/std：对 T5 输出嵌入做标准化/缩放的参数
 encoder_model_name: t5-small
 latent_mean: 0.0
 latent_std: 0.2
 
-# Model architecture
+# Model architecture  全部出现在 eval.py 的模型构造调用里：ELF_models[config.model]
 model: ELF-B  # ELF-B, ELF-M
 bottleneck_dim: 128
 num_time_tokens: 4
 num_self_cond_cfg_tokens: 4
 num_model_mode_tokens: 4
 
-# Denoiser objective
+# Denoiser / Decoder / CFG 三段：主要是训练期超参，解释模型是如何训练出来的
+# Denoiser objective 训练时时间步 t 的采样分布
 denoiser_p_mean: -1.5
 denoiser_p_std: 0.8
 denoiser_noise_scale: 2.0
 t_eps: 0.05
 time_schedule: "logit_normal"
 
-# Decoder objective
+# Decoder objective 以 20% 概率启用“解码器目标”这一支训练
 decoder_prob: 0.2
 decoder_noise_scale: 1.0
 decoder_p_mean: 0.8
 decoder_p_std: 0.8
 
-# Conditioning / CFG
+# Conditioning / CFG  训练时 10% 概率丢掉条件；50% 概率启用 self-conditioning
 label_drop_prob: 0.1
 self_cond_prob: 0.5
 
-# Training (optimizer + schedule)
+# Training (optimizer + schedule) 只服务于 train.py
 epochs: 100
 global_batch_size: 512
 blr: 0.001
@@ -45,7 +47,7 @@ optimizer: muon
 # EMA
 ema_decay1: 0.9999
 
-# Sampling
+# Sampling 评测规模，调用则从单独文件加载采样超参并覆盖
 sampling_configs_path: "src/configs/sampling_configs/cond_sampling_configs.yml"
 num_samples: 1000
 
@@ -54,7 +56,7 @@ log_freq: 100
 save_freq: 10
 eval_freq: 10
 
-# Output
+# Output 只有传了 --seeds 多值时才会加 seed_<val>/ 子目录
 output_dir: "outputs/elf_b-xsum"
 hf_repo_id: null
 resume: "outputs/elf_b-xsum"

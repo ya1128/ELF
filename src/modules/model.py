@@ -14,7 +14,7 @@ from modules.layers import (
     _make_linear,
 )
 
-
+#  单层 Transformer 内部（标准 pre-norm 结构：先归一化再送进子层） 每个 ELFBlock 就是：RMSNorm→Attention→残差 → RMSNorm→SwiGLU FFN→残差，重复 12 次
 class ELFBlock(nn.Module):
     """ELF Transformer block."""
 
@@ -27,7 +27,7 @@ class ELFBlock(nn.Module):
         self.attn_drop = attn_drop
         self.proj_drop = proj_drop
         mlp_hidden_dim = int(hidden_size * mlp_ratio)
-        self.norm1 = RMSNorm(hidden_size, eps=1e-6)
+        self.norm1 = RMSNorm(hidden_size, eps=1e-6)  # RMSNorm(768)
         self.attn = Attention(
             hidden_size, num_heads, qkv_bias=True, qk_norm=True,
             attn_drop=attn_drop, proj_drop=proj_drop,
@@ -41,11 +41,11 @@ class ELFBlock(nn.Module):
         x_normed = self.norm1(x)
         attn_out = self.attn(x_normed, rope_fn, attention_mask=attention_mask,
                              deterministic=deterministic)
-        x = x + attn_out
+        x = x + attn_out  # 残差连接 x = x + Attention( Norm(x) )
 
         x_normed = self.norm2(x)
-        mlp_out = self.mlp(x_normed, deterministic=deterministic)
-        x = x + mlp_out
+        mlp_out = self.mlp(x_normed, deterministic=deterministic)  # SwiGLU 激活的前馈网络
+        x = x + mlp_out  # x = x + FFN( Norm(x) )
         return x
 
 
@@ -144,11 +144,11 @@ class ELF(nn.Module):
         B = t.shape[0]
         prefix_tokens = []
 
-        time_emb = self.t_embedder(t)  # (B, hidden)
+        time_emb = self.t_embedder(t)  # (B, hidden) 把标量时间 t 编码成一个 768 维向量
         prefix_tokens.append(
-            self.t_emb_tokens.expand(B, -1, -1) + time_emb.unsqueeze(1)
+            self.t_emb_tokens.expand(B, -1, -1) + time_emb.unsqueeze(1)  # .expand(B,-1,-1) → (1, 4, 768)；time_emb.unsqueeze(1) → (1, 1, 768) 两者相加，靠广播把同一个 time_emb 加到这 4 个 token 每一个上
         )
-
+        #  CFG 强度被 embedder 编码后加到 4 个 sc-cfg token 上，作为前缀注入注意力
         if self_cond_cfg_scale is not None and self.num_self_cond_cfg_tokens > 0:
             sc_emb = self.self_cond_cfg_embedder(self_cond_cfg_scale)
             prefix_tokens.append(
@@ -168,7 +168,7 @@ class ELF(nn.Module):
         """x: (N, S, C) or (N, S, 2C) with self-cond. t: (N,). attention_mask: (N, S), 1=valid."""
         B = x.shape[0]
 
-        # Self-conditioning: input is [z, x_pred] when 2x encoder dim
+        # Self-conditioning: input is [z, x_pred] when 2x encoder dim 把输入压回隐藏维度 1024→512
         with torch.amp.autocast('cuda', enabled=False):
             if x.shape[-1] == 2 * self.text_encoder_dim:
                 x = self.self_cond_proj(x.float())
@@ -179,22 +179,23 @@ class ELF(nn.Module):
         # decoder_step_active may be None / Python bool / (B,) tensor — the last
         # form supports per-example branching at training time.
         model_mode_offset = 0
+        # mode token 在 forward 里单独处理（因为要受 decoder_step_active 门控
         if self.num_model_mode_tokens > 0:
             mode_tokens = self.mode_tokens.expand(B, -1, -1)
             if decoder_step_active is None:
-                active_gate = 0.0
+                active_gate = 0.0  # 采样阶段不激活 decoder 模式
             elif isinstance(decoder_step_active, torch.Tensor) and decoder_step_active.dim() > 0:
                 active_gate = decoder_step_active.to(mode_tokens.dtype).view(-1, 1, 1)
             else:
                 active_gate = float(decoder_step_active)
             mode_tokens = mode_tokens * active_gate
-            x = torch.cat([mode_tokens, x], dim=1)
-            model_mode_offset = self.num_model_mode_tokens
+            x = torch.cat([mode_tokens, x], dim=1)  # 把 4 个 mode token 接到序列最前面
+            model_mode_offset = self.num_model_mode_tokens  # 偏移量 4+1088
             if attention_mask is not None:
                 mode_mask = torch.ones((B, self.num_model_mode_tokens),
                                        dtype=attention_mask.dtype, device=attention_mask.device)
                 attention_mask = torch.cat([mode_mask, attention_mask], dim=1)
-
+        # 把 build_context 产出的前缀也接上，x 变成 (1, 4(mode) + 8(context) + 1088, 768) [ mode(4) | time(4) | sc-cfg(4) | 原始 1088 个 token 位置 ] 
         prefix_len = 0
         if context_prefix_tokens:
             prefix_tokens = torch.cat(context_prefix_tokens, dim=1)
@@ -204,7 +205,7 @@ class ELF(nn.Module):
                 prefix_mask = torch.ones((B, prefix_len),
                                          dtype=attention_mask.dtype, device=attention_mask.device)
                 attention_mask = torch.cat([prefix_mask, attention_mask], dim=1)
-
+        # 12 个 ELFBlock 逐层过，需要 self.training 为真；测评走 else 分支
         use_checkpoint = self.gradient_checkpointing and self.training and torch.is_grad_enabled()
         for block in self.blocks:
             if use_checkpoint:
@@ -216,17 +217,17 @@ class ELF(nn.Module):
             else:
                 x = block(x, rope_fn=self.feat_rope, attention_mask=attention_mask,
                           deterministic=deterministic)
-
+        # 切掉前面所有前缀 token x[:, 12:] → 回到 (1, 1088, 768)
         x = x[:, prefix_len + model_mode_offset:]
 
-        # Factored decoder unembedding: hidden -> text_encoder_dim -> vocab
+        # Factored decoder unembedding: hidden -> text_encoder_dim -> vocab  产出连续去噪结果 + 可选解码 logits
         with torch.amp.autocast('cuda', enabled=False):
             decoder_logits = None
             if decoder_step_active is not None:
                 x_f32 = x.float()
                 hidden = F.gelu(x_f32 @ self.proj_kernel + self.proj_bias, approximate="tanh")
                 decoder_logits = hidden @ self.unembed_kernel + self.unembed_bias
-            output = self.final_layer(x.float())
+            output = self.final_layer(x.float())  # FinalLayer(768, out_channels=512) 把 (1,1088,768) 映回 (1,1088,512)——这就是流匹配的 x_pred（预测的干净 latent）
         return output, decoder_logits
 
 
